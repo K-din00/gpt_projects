@@ -4,7 +4,11 @@ const SLOT_INTERVAL_MINUTES = 30;
 const DATE_RANGE_MONTHS = 3;
 const STORAGE_KEY = 'scheduler-bookings-v1';
 
+const todayIso = toISODateLocal();
+
 const dateGrid = document.getElementById('date-grid');
+const monthLabel = document.getElementById('month-label');
+const monthCycleBtn = document.getElementById('month-cycle');
 const selectedDateLabel = document.getElementById('selected-date-label');
 const timeGrid = document.getElementById('time-grid');
 const bookingModal = document.getElementById('booking-modal');
@@ -26,23 +30,40 @@ const loginPassword = document.getElementById('login-password');
 const loginError = document.getElementById('login-error');
 const adminDashboard = document.getElementById('admin-dashboard');
 const adminList = document.getElementById('admin-list');
+const adminTodayList = document.getElementById('admin-today-list');
+const adminFutureList = document.getElementById('admin-future-list');
+const adminFutureSection = document.getElementById('admin-future');
+const adminTodayLabel = document.getElementById('admin-today-label');
 const adminClose = document.getElementById('admin-close');
+const futureBtn = document.getElementById('future-btn');
 
 const bookings = loadBookings();
 let dateOptions = [];
+let monthGroups = [];
+let visibleMonthDates = [];
+let currentMonthIndex = 0;
 let selectedDate = null;
 let activeSlot = null;
 let toastTimeoutId = null;
 let isAdminAuthenticated = false;
+let futureVisible = false;
+let hasFutureEntries = false;
 
 init();
 
 function init() {
   dateOptions = buildDateRange(DATE_RANGE_MONTHS);
-  selectedDate = dateOptions[0]?.iso ?? null;
+  monthGroups = buildMonthGroups(dateOptions);
+  const todayMonthKey = todayIso.slice(0, 7);
+  const todayMonthIndex = monthGroups.findIndex((group) => group.key === todayMonthKey);
+  currentMonthIndex = todayMonthIndex >= 0 ? todayMonthIndex : 0;
+  const todayOption = dateOptions.find((option) => option.iso === todayIso);
+  selectedDate = todayOption ? todayOption.iso : dateOptions[0]?.iso ?? null;
+
   renderDates();
   renderSlots();
   updateSelectedDateLabel();
+  updateMonthLabel();
   renderAdminBookings();
   bindEvents();
   handleDeclineFromUrl();
@@ -93,6 +114,22 @@ function bindEvents() {
     dateGrid.addEventListener('keydown', handleDateGridKeydown);
   }
 
+  if (monthCycleBtn) {
+    if (monthGroups.length <= 1) {
+      monthCycleBtn.disabled = true;
+    }
+    monthCycleBtn.addEventListener('click', () => {
+      if (!monthGroups.length) return;
+      currentMonthIndex = (currentMonthIndex + 1) % monthGroups.length;
+      const nextVisible = getVisibleMonthDates();
+      selectedDate = nextVisible[0]?.iso ?? selectedDate;
+      renderDates();
+      renderSlots();
+      updateSelectedDateLabel();
+      updateMonthLabel();
+    });
+  }
+
   phoneInput.addEventListener('input', handlePhoneInput);
   phoneInput.addEventListener('blur', () => validatePhone(true));
 
@@ -113,12 +150,30 @@ function bindEvents() {
   if (adminClose) {
     adminClose.addEventListener('click', closeAdminDashboard);
   }
+
+  if (futureBtn) {
+    futureBtn.addEventListener('click', handleFutureClick);
+  }
 }
 
 function renderDates() {
   if (!dateGrid) return;
   dateGrid.innerHTML = '';
-  dateOptions.forEach((option) => {
+  const monthDates = getVisibleMonthDates();
+  visibleMonthDates = monthDates;
+
+  if (!monthDates.length) {
+    dateGrid.innerHTML = '<p class="empty-state">No dates available.</p>';
+    dateGrid.setAttribute('aria-activedescendant', '');
+    return;
+  }
+
+  if (!monthDates.some((option) => option.iso === selectedDate)) {
+    selectedDate = monthDates[0].iso;
+    updateSelectedDateLabel();
+  }
+
+  monthDates.forEach((option) => {
     const button = document.createElement('button');
     button.type = 'button';
     button.className = 'date-button';
@@ -359,55 +414,106 @@ function closeLoginModal() {
 function openAdminDashboard() {
   adminDashboard.classList.add('is-open');
   adminDashboard.setAttribute('aria-hidden', 'false');
+  futureVisible = false;
   renderAdminBookings();
 }
 
 function closeAdminDashboard() {
   adminDashboard.classList.remove('is-open');
   adminDashboard.setAttribute('aria-hidden', 'true');
+  futureVisible = false;
+  renderAdminBookings();
 }
 
 function renderAdminBookings() {
-  if (!adminList) return;
+  if (!(adminList && adminTodayList && adminFutureList)) return;
   const entries = Object.values(bookings)
-    .filter((entry) => entry && entry.date && entry.time);
-  entries.sort((a, b) => {
-    if (a.date === b.date) {
-      return a.time.localeCompare(b.time);
-    }
-    return a.date.localeCompare(b.date);
-  });
+    .filter((entry) => entry && entry.date && entry.time)
+    .sort((a, b) => {
+      if (a.date === b.date) {
+        return a.time.localeCompare(b.time);
+      }
+      return a.date.localeCompare(b.date);
+    });
 
-  if (!entries.length) {
-    adminList.innerHTML = '<p class="empty-state">No bookings yet.</p>';
+  const todayEntries = entries.filter((entry) => entry.date === todayIso);
+  const futureEntries = entries.filter((entry) => entry.date !== todayIso);
+
+  renderAdminCardList(adminTodayList, todayEntries, 'No bookings today.');
+  renderAdminCardList(adminFutureList, futureEntries, 'No future bookings yet.');
+
+  if (adminTodayLabel) {
+    adminTodayLabel.textContent = formatDateLong(todayIso);
+  }
+
+  hasFutureEntries = futureEntries.length > 0;
+  if (!hasFutureEntries) {
+    futureVisible = false;
+  }
+  const shouldShowFuture = hasFutureEntries && futureVisible;
+
+  if (adminFutureSection) {
+    adminFutureSection.setAttribute('aria-hidden', shouldShowFuture ? 'false' : 'true');
+  }
+
+  if (futureBtn) {
+    futureBtn.disabled = !hasFutureEntries;
+    futureBtn.setAttribute('aria-disabled', String(!hasFutureEntries));
+    futureBtn.classList.toggle('is-active', shouldShowFuture);
+    futureBtn.setAttribute('aria-pressed', String(shouldShowFuture));
+  }
+}
+
+function renderAdminCardList(container, items, emptyMessage) {
+  if (!container) return;
+  if (!items.length) {
+    container.innerHTML = `<p class="empty-state">${emptyMessage}</p>`;
     return;
   }
 
-  adminList.innerHTML = '';
-  entries.forEach((entry) => {
+  container.innerHTML = '';
+  items.forEach((entry) => {
     const card = document.createElement('article');
     card.className = 'admin-card';
     card.innerHTML = `
-      <h4>${formatDateShort(entry.date)} · ${entry.time}</h4>
+      <h4>${formatDateShort(entry.date)} &middot; ${entry.time}</h4>
       <dl>
         <dt>Name</dt><dd>${entry.name}</dd>
         <dt>Phone</dt><dd>+${entry.phone}</dd>
-        <dt>Notes</dt><dd>${entry.notes || '—'}</dd>
+        <dt>Notes</dt><dd>${entry.notes || 'None'}</dd>
       </dl>
     `;
-    adminList.appendChild(card);
+    container.appendChild(card);
   });
+}
+
+function handleFutureClick() {
+  if (!hasFutureEntries) {
+    return;
+  }
+
+  if (!futureVisible) {
+    futureVisible = true;
+    renderAdminBookings();
+  }
+
+  if (adminFutureSection && adminFutureSection.getAttribute('aria-hidden') === 'false') {
+    adminFutureSection.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
 }
 
 function handleDateGridKeydown(event) {
   if (!['ArrowLeft', 'ArrowRight'].includes(event.key)) {
     return;
   }
+  if (!visibleMonthDates.length) {
+    return;
+  }
   event.preventDefault();
   const delta = event.key === 'ArrowRight' ? 1 : -1;
-  const currentIndex = dateOptions.findIndex((option) => option.iso === selectedDate);
-  const nextIndex = Math.min(Math.max(currentIndex + delta, 0), dateOptions.length - 1);
-  const nextDate = dateOptions[nextIndex];
+  const currentIndex = visibleMonthDates.findIndex((option) => option.iso === selectedDate);
+  const nextIndex = Math.min(Math.max(currentIndex + delta, 0), visibleMonthDates.length - 1);
+  const nextDate = visibleMonthDates[nextIndex];
   if (nextDate) {
     selectDate(nextDate.iso);
     focusDateButton(nextDate.iso);
@@ -426,6 +532,33 @@ function updateSelectedDateLabel() {
   selectedDateLabel.textContent = selectedDate ? formatDateLong(selectedDate) : 'No date selected';
 }
 
+function updateMonthLabel() {
+  if (!monthLabel) return;
+  const activeGroup = monthGroups[currentMonthIndex];
+  monthLabel.textContent = activeGroup ? activeGroup.label : 'No month available';
+  if (monthCycleBtn) {
+    if (monthGroups.length <= 1) {
+      monthCycleBtn.textContent = 'Current Month';
+      monthCycleBtn.disabled = true;
+      monthCycleBtn.setAttribute('aria-label', 'Only current month available');
+    } else {
+      const nextGroup = monthGroups[(currentMonthIndex + 1) % monthGroups.length];
+      monthCycleBtn.textContent = 'Next Month';
+      monthCycleBtn.disabled = false;
+      monthCycleBtn.setAttribute('aria-label', `Show ${nextGroup.label}`);
+    }
+  }
+}
+
+function getActiveMonthKey() {
+  return monthGroups[currentMonthIndex]?.key;
+}
+
+function getVisibleMonthDates() {
+  const key = getActiveMonthKey();
+  return key ? dateOptions.filter((option) => option.monthKey === key) : [];
+}
+
 function buildDateRange(monthCount) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
@@ -435,14 +568,30 @@ function buildDateRange(monthCount) {
 
   for (let date = new Date(today); date <= end; date.setDate(date.getDate() + 1)) {
     const current = new Date(date);
+    const iso = toISODateLocal(current);
     options.push({
-      iso: current.toISOString().split('T')[0],
+      iso,
+      monthKey: iso.slice(0, 7),
       weekday: current.toLocaleDateString(undefined, { weekday: 'short' }),
       long: current.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
     });
   }
 
   return options;
+}
+
+function buildMonthGroups(options) {
+  const map = new Map();
+  options.forEach((option) => {
+    if (!map.has(option.monthKey)) {
+      const labelDate = new Date(`${option.monthKey}-01T00:00:00`);
+      map.set(option.monthKey, {
+        key: option.monthKey,
+        label: labelDate.toLocaleDateString(undefined, { month: 'long', year: 'numeric' }),
+      });
+    }
+  });
+  return Array.from(map.values());
 }
 
 function loadBookings() {
@@ -493,4 +642,10 @@ function formatDateLong(dateIso) {
 
 function getBookingKey(date, time) {
   return `${date}|${time}`;
+}
+
+function toISODateLocal(date = new Date()) {
+  const offsetMs = date.getTimezoneOffset() * 60000;
+  const local = new Date(date.getTime() - offsetMs);
+  return local.toISOString().split('T')[0];
 }

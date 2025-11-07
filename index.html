@@ -25,12 +25,15 @@
     <section class="calendar-section" aria-labelledby="calendar-title">
       <div class="calendar-card">
         <h2 id="calendar-title">Calendar</h2>
-        <p class="calendar-intro">Pick a day within the next three months and reserve a slot between 08:00 and 18:00.</p>
+        <p class="calendar-intro">Browse this month's dates below and use the button to step through upcoming months.</p>
 
         <section class="date-section" aria-label="Select a date">
           <div class="date-section__header">
-            <h3>Dates</h3>
-            <p>Showing the next 3 months</p>
+            <div>
+              <h3>Dates</h3>
+              <p id="month-label">Current month</p>
+            </div>
+            <button type="button" class="month-btn" id="month-cycle" aria-label="Show next month">Next Month</button>
           </div>
           <div class="date-grid" id="date-grid" role="listbox" aria-activedescendant="" tabindex="0"></div>
         </section>
@@ -121,9 +124,27 @@
           <h2>Admin Calendar</h2>
           <p class="calendar-intro">Tracks every confirmed booking submitted through the form.</p>
         </div>
-        <button type="button" class="secondary-btn" id="admin-close">Close</button>
+        <div class="admin-actions">
+          <button type="button" class="secondary-btn" id="future-btn">Future</button>
+          <button type="button" class="secondary-btn" id="admin-close">Close</button>
+        </div>
       </header>
-      <div class="admin-list" id="admin-list" aria-live="polite"></div>
+      <div class="admin-list" id="admin-list">
+        <section class="admin-section" id="admin-today">
+          <div class="admin-section__header">
+            <h3>Today</h3>
+            <p id="admin-today-label"></p>
+          </div>
+          <div class="admin-cards" id="admin-today-list" aria-live="polite"></div>
+        </section>
+        <section class="admin-section admin-section--future" id="admin-future" aria-hidden="true">
+          <div class="admin-section__header">
+            <h3>Future</h3>
+            <p>Upcoming bookings beyond today</p>
+          </div>
+          <div class="admin-cards" id="admin-future-list" aria-live="polite"></div>
+        </section>
+      </div>
     </div>
   </section>
 
